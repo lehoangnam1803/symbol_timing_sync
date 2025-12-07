@@ -10,15 +10,12 @@ TED_name = [{'Early-Late (non-data-aided)'}, {'Gardner (non-data-aided)'},...
     {'Mueller-Muller (decision-directed)'}, {'Zero-Crossing (decision-directed)'}];
 
 BER = zeros(4, length(SNRdB));
+flag1 = zeros(4, length(SNRdB));
+flag2 = zeros(4, length(SNRdB));
 
 for ii = 1:4
-
-
-
     for i = 1:length(SNRdB)
         snr = SNRdB(i);
-        flag1 = 0;
-        flag2 = 0;
         while true
             txfilter = comm.RaisedCosineTransmitFilter(...
                 'OutputSamplesPerSymbol',sps);
@@ -49,10 +46,10 @@ for ii = 1:4
                 if (ber1 < 0.4)
                     break;
                 else
-                    flag2 = 1;
+                    flag2(ii,i) = flag2(ii,i) + 1;
                 end
             else
-                flag1 = 1;
+                flag1(ii,i) = flag1(ii,i) + 1;
             end
         end
         BER(ii,i) = ber1;
