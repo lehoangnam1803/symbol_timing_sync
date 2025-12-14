@@ -1,4 +1,4 @@
-clearvars, clc, close all
+clear, clc, close all
 
 %% Debug Configuration
 
@@ -7,7 +7,7 @@ debug_tl_runtime = 0; % Open scope for debugging of sync loop iterations
 
 %% Parameters
 L        = 32;         % Oversampling factor
-M        = 4;          % Constellation order
+M        = 16;          % Constellation order
 N        = 2;          % Dimensions per symbol (1 for PAM, 2 for QAM)
 nSymbols = 1e5;        % Number of transmit symbols
 Bn_Ts    = 0.01;       % Loop noise bandwidth (Bn) times symbol period (Ts)
@@ -16,10 +16,10 @@ rollOff  = 0.2;        % Pulse shaping roll-off factor
 timeOffset = 25;       % Simulated channel delay in samples
 fsOffsetPpm = 0;       % Sampling clock frequency offset in ppm
 rcDelay  = 10;         % Raised cosine (combined Tx/Rx) delay
-EsN0     = 20;         % Target Es/N0
+EsN0     = 10;         % Target Es/N0
 Ex       = 1;          % Average symbol energy
-TED      = 'ZCTED';    % TED (MLTED, ELTED, ZCTED, GTED, or MMTED)
-intpl    = 2;          % 0) Polyphase; 1) Linear; 2) Quadratic; 3) Cubic
+TED      = 'GTED';    % TED (MLTED, ELTED, ZCTED, GTED, or MMTED)
+intpl    = 3;          % 0) Polyphase; 1) Linear; 2) Quadratic; 3) Cubic
 forceZc  = 0;          % Use to force zero-crossings and debug self-noise
 
 %% System Objects
@@ -164,15 +164,78 @@ fprintf("MATLAB's %s Timing Recovery: %.2f dB\n", ...
     matlabTed, mer(rxSync2(skip:end)))
 
 if (debug_tl_static)
+    figure(1)
     scatterplot(rxNoSync(skip:end))
     title('No Timing Correction');
-
+    figure(2)
     scatterplot(rxPerfectSync(skip:end))
     title('Ideal Timing Correction');
-
+    figure(3)
     scatterplot(rxSync1(skip:end))
     title(sprintf('Our %s Timing Recovery', TED));
-
+    figure(4)
     scatterplot(rxSync2(skip:end))
     title(sprintf('MATLAB''s %s', matlabTed));
 end
+%% ===================== BER / SER COMPUTATION =====================
+
+% 1. Bỏ transient do RRC (rất quan trọng)
+% Group delay của cặp RRC Tx + Rx (tính theo SYMBOL)
+grpDelaySym = rcDelay;  
+
+rxSync1 = rxSync1(grpDelaySym+1:end);
+rxSync2 = rxSync2(grpDelaySym+1:end);
+rxPerfectSync = rxPerfectSync(grpDelaySym+1:end);
+
+% 2. Căn chỉnh độ dài
+Nmin = min([ ...
+    length(data), ...
+    length(rxSync1), ...
+    length(rxSync2), ...
+    length(rxPerfectSync) ...
+]);
+
+data_ref = data(1:Nmin);
+
+rxSync1 = rxSync1(1:Nmin);
+rxSync2 = rxSync2(1:Nmin);
+rxPerfectSync = rxPerfectSync(1:Nmin);
+
+% 3. Demodulation (QUAN TRỌNG: chia lại Ksym)
+if (N == 2)
+    rxSym1 = qamdemod(rxSync1 / Ksym, M, 'UnitAveragePower', false);
+    rxSym2 = qamdemod(rxSync2 / Ksym, M, 'UnitAveragePower', false);
+    rxSymP = qamdemod(rxPerfectSync / Ksym, M, 'UnitAveragePower', false);
+else
+    rxSym1 = pamdemod(real(rxSync1 / Ksym), M);
+    rxSym2 = pamdemod(real(rxSync2 / Ksym), M);
+    rxSymP = pamdemod(real(rxPerfectSync / Ksym), M);
+end
+
+% 4. SER (symbol error rate) – nên xem trước
+[~, ser1] = symerr(data_ref, rxSym1);
+[~, ser2] = symerr(data_ref, rxSym2);
+[~, serP] = symerr(data_ref, rxSymP);
+
+% 5. BER (bit error rate)
+k = log2(M);
+
+txBits  = de2bi(data_ref, k, 'left-msb');
+rxBits1 = de2bi(rxSym1,   k, 'left-msb');
+rxBits2 = de2bi(rxSym2,   k, 'left-msb');
+rxBitsP = de2bi(rxSymP,   k, 'left-msb');
+
+[~, ber1] = biterr(txBits(:), rxBits1(:));
+[~, ber2] = biterr(txBits(:), rxBits2(:));
+[~, berP] = biterr(txBits(:), rxBitsP(:));
+
+% 6. In kết quả
+fprintf("\n===== SER =====\n");
+fprintf("Custom Timing Sync : %.3e\n", ser1);
+fprintf("MATLAB Timing Sync : %.3e\n", ser2);
+fprintf("Perfect Timing     : %.3e\n", serP);
+
+fprintf("\n===== BER =====\n");
+fprintf("Custom Timing Sync : %.3e\n", ber1);
+fprintf("MATLAB Timing Sync : %.3e\n", ber2);
+fprintf("Perfect Timing     : %.3e\n", berP);
